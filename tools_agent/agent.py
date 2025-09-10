@@ -13,6 +13,7 @@ from tools_agent.utils.tools import (
     wrap_mcp_authenticate_tool,
     create_langchain_mcp_tool,
 )
+from tools_agent.utils.custom_mcp import get_custom_mcp_tools
 
 
 UNEDITABLE_SYSTEM_PROMPT = "\nIf the tool throws an error requiring authentication, provide the user with a Markdown link to the authentication page and prompt them to authenticate."
@@ -242,6 +243,10 @@ async def graph(config: RunnableConfig):
         except Exception as e:
             print(f"Failed to fetch MCP tools: {e}")
             pass
+
+    # Load custom MCP tools from environment-configured server
+    custom_mcp_tools = await get_custom_mcp_tools()
+    tools.extend(custom_mcp_tools)
 
     model = init_chat_model(
         cfg.model_name,
