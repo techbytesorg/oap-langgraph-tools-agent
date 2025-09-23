@@ -1,4 +1,5 @@
 import os
+import logging
 from langchain_core.runnables import RunnableConfig
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -13,7 +14,14 @@ from tools_agent.utils.tools import (
     wrap_mcp_authenticate_tool,
     create_langchain_mcp_tool,
 )
+from tools_agent.utils.structured_output import load_schema_model
+from langgraph.store.memory import InMemoryStore
+from langgraph.config import get_store
 
+logger = logging.getLogger(__name__)
+
+# Initialize LangGraph memory store
+store = InMemoryStore()
 
 UNEDITABLE_SYSTEM_PROMPT = "\nIf the tool throws an error requiring authentication, provide the user with a Markdown link to the authentication page and prompt them to authenticate."
 
@@ -250,9 +258,40 @@ async def graph(config: RunnableConfig):
         api_key=get_api_key_for_model(cfg.model_name, config) or "No token found"
     )
 
+    # Check for structured output schema
+    schema_name = config.get("configurable", {}).get("OutputSchemaName", None)
+    response_format = None
+
+    if schema_name:
+        logger.debug(f"Processing structured output request for schema: {schema_name}")
+        try:
+            # Try to get user ID - first from config, then from JWT token
+            user_id = config.get("configurable", {}).get("user_id")
+
+            if not user_id:
+                supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
+                if supabase_token:
+                    # Extract user ID from token if available
+                    import jwt
+                    try:
+                        decoded = jwt.decode(supabase_token, options={"verify_signature": False})
+                        user_id = decoded.get("sub")
+                        logger.debug(f"Extracted user_id from JWT token")
+                    except Exception as jwt_error:
+                        logger.warning(f"JWT decode error: {jwt_error}")
+
+            response_format = await load_schema_model(schema_name, user_id)
+            logger.info(f"Successfully loaded schema {schema_name} for structured output")
+        except Exception as e:
+            logger.error(f"Error loading schema {schema_name}: {e}")
+            # Continue without structured output
+            response_format = None
+
     return create_react_agent(
         prompt=cfg.system_prompt + UNEDITABLE_SYSTEM_PROMPT,
         model=model,
         tools=tools,
         config_schema=GraphConfigPydantic,
+        response_format=response_format,
+        store=store
     )
