@@ -6,6 +6,7 @@ This script follows the authentication pattern from the external access POC.
 import os
 import asyncio
 import uuid
+import json
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langgraph.pregel.remote import RemoteGraph
@@ -23,7 +24,9 @@ USER_PASSWORD = os.environ.get("USER_PASSWORD")
 AGENT_URL = "http://localhost:2024"  # Local development server
 ASSISTANT_ID = "agent"  # Default assistant ID for local development
 
-# Test recipe for allergy analysis
+# Test data for comprehensive OpenAI spec coverage
+
+# Test recipe for allergy analysis (Schema 8)
 FRESHPREP_TEST_RECIPE = """
 Pulled Chicken Fajitas
 with Chipotle-Pineapple Sauce & Cheddar
@@ -54,6 +57,19 @@ Lime Crema
 * Pineapple-Lime Juice: Pineapple Juice , Fresh Lime Juice
 * Spice Blend: Smoked Paprika , Cumin
 * Lime Crema: Sour Cream , Mayonnaise , Fresh Lime Juice
+"""
+
+# Test recipe for nutrition analysis (Schema 1)
+SALMON_QUINOA_RECIPE = """
+Grilled Salmon with Quinoa and Roasted Vegetables
+- Grilled Salmon (6oz Atlantic salmon fillet)
+- Quinoa (1 cup cooked)
+- Roasted Broccoli (1 cup florets)
+- Olive Oil (2 tbsp for cooking)
+- Lemon (1 wedge)
+- Garlic and Herbs seasoning
+Serves: 2 people
+Estimated prep time: 30 minutes
 """
 
 def authenticate_supabase():
@@ -104,64 +120,98 @@ async def test_structured_output():
         headers=headers
     )
 
-    # Test cases with different schemas
+    # Comprehensive test cases covering all OpenAI Structured Output features
     test_cases = [
         {
-            "name": "No Schema",
-            "config": {
-                "configurable": {
-                    "thread_id": str(uuid.uuid4()),
-                    "x-supabase-access-token": access_token,
-                }
-            },
-            "prompt": "what is the value of 2 + 3?",
+            "name": "Test 0: No Schema (Baseline)",
+            "schema": None,
+            "prompt": "What is 2 + 3?",
+            "description": "Baseline test without structured output"
         },
         {
-            "name": "OutputSchemaA",
-            "config": {
-                "configurable": {
-                    "thread_id": str(uuid.uuid4()),
-                    "x-supabase-access-token": access_token,
-                    "user_id": user_id,
-                    "OutputSchemaName": "OutputSchemaA"
-                }
-            },
-            "prompt": "what is the value of 2 + 3?",
+            "name": "Test 1: RecipeNutritionAnalysis (Number Constraints)",
+            "schema": "RecipeNutritionAnalysis",
+            "prompt": f"Analyze the nutritional content of this recipe:\n\n{SALMON_QUINOA_RECIPE}\n\nProvide calories, protein/fat/carbs in grams, number of servings, and prep time (round to nearest 5 minutes).",
+            "description": "Tests: min/max, ge/le, multipleOf constraints"
         },
         {
-            "name": "OutputSchemaB",
-            "config": {
-                "configurable": {
-                    "thread_id": str(uuid.uuid4()),
-                    "x-supabase-access-token": access_token,
-                    "user_id": user_id,
-                    "OutputSchemaName": "OutputSchemaB"
-                }
-            },
-            "prompt": "what is the value of 2 + 3?",
+            "name": "Test 2: IngredientClassification (Enums & Arrays)",
+            "schema": "IngredientClassification",
+            "prompt": "Classify this ingredient: Organic Almond Butter. Provide the ingredient name, categorize it (protein/grain/vegetable/fruit/dairy/condiment/spice), identify which dietary restrictions it fits (vegan/vegetarian/gluten-free/dairy-free/nut-free/kosher/halal), and list any allergen tags (max 5).",
+            "description": "Tests: enum, array of enums, minItems/maxItems"
         },
         {
-            "name": "AllergyAnalysisResponse",
-            "config": {
-                "configurable": {
-                    "thread_id": str(uuid.uuid4()),
-                    "x-supabase-access-token": access_token,
-                    "user_id": user_id,
-                    "OutputSchemaName": "AllergyAnalysisResponse"
-                }
-            },
-            "prompt": f"Analyze this recipe for food allergens:\n\n{FRESHPREP_TEST_RECIPE}",
+            "name": "Test 3: FoodSafetyReport ($defs & $ref)",
+            "schema": "FoodSafetyReport",
+            "prompt": "Generate a food safety inspection report for a commercial kitchen inspected on 2025-03-15. Inspection ID: INS-2025-0315. Found violations: 1) Improper food storage temperature in walk-in cooler (critical severity), corrective action: adjust thermostat and monitor; 2) Missing handwashing signage near prep area (minor severity), corrective action: install signage; 3) Expired ingredients in dry storage (major severity), corrective action: dispose and update inventory system. Calculate an overall safety score (0-100).",
+            "description": "Tests: nested objects with $ref, array of complex objects"
+        },
+        {
+            "name": "Test 4: MenuPlanning (Complex Nested Objects)",
+            "schema": "MenuPlanning",
+            "prompt": "Create a 3-day meal plan for a small restaurant starting Monday, April 1, 2025. Each day needs breakfast, lunch, and dinner. For each meal, provide dish name, main ingredients (list), and estimated cost per serving. Use a 'Spring Fresh' theme focusing on seasonal vegetables and local proteins.",
+            "description": "Tests: deeply nested objects, array of complex nested structures"
+        },
+        {
+            "name": "Test 5: RecipeInstructions (Recursive Schema)",
+            "schema": "RecipeInstructions",
+            "prompt": "Provide step-by-step instructions for making Homemade Sourdough Bread. Include the recipe name and total time. Break down into main steps, and for complex steps like 'Prepare the dough' or 'Shape and proof', include sub-steps. Each step should have a step number, instruction text, and duration in minutes.",
+            "description": "Tests: recursive schemas, self-referencing structures"
+        },
+        {
+            "name": "Test 6: SupplierQuote (Union Types & Pattern Validation)",
+            "schema": "SupplierQuote",
+            "prompt": "Generate a supplier quote: Supplier name is 'Fresh Farms Co.', contact email john.smith@freshfarms.com, phone number (555) 123-4567, quoting $450.00 for organic produce delivery. Expected delivery date is 2025-04-15. Add optional notes about requiring refrigerated transport.",
+            "description": "Tests: pattern validation (email, phone, date), union with null"
+        },
+        {
+            "name": "Test 7: QualityInspection (Multiple Enums & Format Validation)",
+            "schema": "QualityInspection",
+            "prompt": "Create a quality control inspection record: Batch ID BT-2025-0315 for processed tomatoes. Inspector email: qa.inspector@foodco.com. Inspection datetime: 2025-03-15T14:30:00. Assign a quality grade (A/B/C/D/F), set status (pending/approved/rejected/review_required), and list inspection findings such as color consistency, texture, no defects found.",
+            "description": "Tests: multiple enums, format validation (email, date-time), pattern (batch ID)"
+        },
+        {
+            "name": "Test 8: AllergyAnalysisResponse (Keep Existing)",
+            "schema": "AllergyAnalysisResponse",
+            "prompt": f"Analyze this recipe for food allergens:\n\n{FRESHPREP_TEST_RECIPE}\n\nIdentify high-risk allergens with reasons, and provide recommendations for people with allergies.",
+            "description": "Tests: array of nested objects (proven working)"
         }
     ]
 
+    # Convert to old format for compatibility
+    formatted_test_cases = []
+    for test in test_cases:
+        case = {
+            "name": test["name"],
+            "config": {
+                "configurable": {
+                    "thread_id": str(uuid.uuid4()),
+                    "x-supabase-access-token": access_token,
+                }
+            },
+            "prompt": test["prompt"],
+            "description": test["description"]
+        }
+        if test["schema"]:
+            case["config"]["configurable"]["user_id"] = user_id
+            case["config"]["configurable"]["OutputSchemaName"] = test["schema"]
+        formatted_test_cases.append(case)
+
+    test_cases = formatted_test_cases
+
     # Run test cases
-    for test_case in test_cases:
-        print(f"\n{'='*50}")
-        print(f"Testing: {test_case['name']}")
-        print(f"{'='*50}")
+    passed = 0
+    failed = 0
+
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\n{'='*80}")
+        print(f"{test_case['name']}")
+        print(f"Description: {test_case['description']}")
+        print(f"{'='*80}")
 
         try:
             # Invoke the graph
+            print(f"Sending request to LangGraph agent...")
             result = await remote_graph.ainvoke({
                 "messages": [{"role": "user", "content": test_case["prompt"]}]
             }, config=test_case["config"])
@@ -171,17 +221,46 @@ async def test_structured_output():
             if schema_name:
                 structured_response = result.get("structured_response")
                 if structured_response:
-                    print(f"✅ Structured output ({schema_name}):")
-                    print(structured_response)
+                    print(f"\n✅ SUCCESS - Structured output received ({schema_name}):")
+                    print("-" * 80)
+                    # Pretty print if it's JSON
+                    try:
+                        if isinstance(structured_response, str):
+                            parsed = json.loads(structured_response)
+                            print(json.dumps(parsed, indent=2))
+                        else:
+                            print(json.dumps(structured_response, indent=2))
+                    except:
+                        print(structured_response)
+                    passed += 1
                 else:
-                    print("❌ No structured response found, showing text output:")
+                    print(f"\n❌ FAILED - No structured response found")
+                    print("Text output received instead:")
                     print(result["messages"][-1]["content"])
+                    failed += 1
             else:
-                print("Text output:")
+                print(f"\n✅ Text output (no schema expected):")
                 print(result["messages"][-1]["content"])
+                passed += 1
 
         except Exception as e:
-            print(f"Error in test case '{test_case['name']}': {e}")
+            print(f"\n❌ FAILED - Error in test case: {e}")
+            import traceback
+            traceback.print_exc()
+            failed += 1
+
+    # Summary
+    print(f"\n{'='*80}")
+    print(f"TEST SUMMARY")
+    print(f"{'='*80}")
+    print(f"Total tests: {len(test_cases)}")
+    print(f"Passed: {passed}")
+    print(f"Failed: {failed}")
+    if failed == 0:
+        print(f"\n🎉 All tests passed! Full OpenAI spec coverage demonstrated.")
+    else:
+        print(f"\n⚠️  Some tests failed. Review output above.")
+    print(f"{'='*80}")
 
 async def main():
     """Main function to run structured output tests"""
