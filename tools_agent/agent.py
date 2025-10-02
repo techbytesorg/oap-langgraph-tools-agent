@@ -188,10 +188,20 @@ async def graph(config: RunnableConfig):
             )
             tools.append(rag_tool)
 
+    logger.info(f"MCP Config check: mcp_config={cfg.mcp_config is not None}")
+    if cfg.mcp_config:
+        logger.info(f"MCP Config details: url={cfg.mcp_config.url}, tools={cfg.mcp_config.tools}, auth_required={cfg.mcp_config.auth_required}")
+
     if cfg.mcp_config and cfg.mcp_config.auth_required:
+        logger.info("MCP auth required, fetching tokens...")
         mcp_tokens = await fetch_tokens(config)
+        logger.info(f"Fetched MCP tokens: {mcp_tokens is not None}")
     else:
+        logger.info("MCP auth not required, skipping token fetch")
         mcp_tokens = None
+
+    logger.info(f"MCP connection check: has_config={cfg.mcp_config is not None}, has_url={cfg.mcp_config and cfg.mcp_config.url is not None}, has_tools={cfg.mcp_config and cfg.mcp_config.tools is not None}, auth_ok={mcp_tokens is not None or (cfg.mcp_config and not cfg.mcp_config.auth_required)}")
+
     if (
         cfg.mcp_config
         and cfg.mcp_config.url
@@ -199,6 +209,8 @@ async def graph(config: RunnableConfig):
         and (mcp_tokens or not cfg.mcp_config.auth_required)
     ):
         server_url = cfg.mcp_config.url.rstrip("/") + "/mcp"
+        logger.info(f"Connecting to MCP server: {server_url}")
+        logger.info(f"Looking for tools: {cfg.mcp_config.tools}")
 
         tool_names_to_find = set(cfg.mcp_config.tools)
         fetched_mcp_tools_list: list[StructuredTool] = []
@@ -210,11 +222,15 @@ async def graph(config: RunnableConfig):
             and {"Authorization": f"Bearer {mcp_tokens['access_token']}"}
             or None
         )
+        logger.info(f"Using auth headers: {headers is not None}")
         try:
+            logger.info("Opening MCP client connection...")
             async with streamablehttp_client(server_url, headers=headers) as streams:
                 read_stream, write_stream, _ = streams
                 async with ClientSession(read_stream, write_stream) as session:
+                    logger.info("Initializing MCP session...")
                     await session.initialize()
+                    logger.info("MCP session initialized successfully")
 
                     page_cursor = None
 
@@ -229,6 +245,7 @@ async def graph(config: RunnableConfig):
                                 mcp_tool.name in tool_names_to_find
                                 and mcp_tool.name not in names_of_tools_added
                             ):
+                                logger.info(f"Adding MCP tool: {mcp_tool.name}")
                                 langchain_tool = create_langchain_mcp_tool(
                                     mcp_tool, mcp_server_url=server_url, headers=headers
                                 )
@@ -247,8 +264,10 @@ async def graph(config: RunnableConfig):
                         ):
                             break
 
+                    logger.info(f"Successfully loaded {len(fetched_mcp_tools_list)} MCP tool(s)")
                     tools.extend(fetched_mcp_tools_list)
         except Exception as e:
+            logger.error(f"Failed to fetch MCP tools: {e}", exc_info=True)
             print(f"Failed to fetch MCP tools: {e}")
             pass
 
@@ -282,6 +301,10 @@ async def graph(config: RunnableConfig):
             logger.error(f"Error loading schema {schema_name}: {e}")
             # Continue without structured output
             response_format = None
+
+    logger.info(f"Creating agent with {len(tools)} tools")
+    if tools:
+        logger.info(f"Tool names: {[tool.name for tool in tools]}")
 
     return create_react_agent(
         prompt=cfg.system_prompt + UNEDITABLE_SYSTEM_PROMPT,

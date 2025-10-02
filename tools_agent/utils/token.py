@@ -104,17 +104,26 @@ async def fetch_tokens(config: RunnableConfig) -> dict[str, Any]:
 
     current_tokens = await get_tokens(config)
     if current_tokens:
+        logging.info("Using cached MCP tokens")
         return current_tokens
 
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
     if not supabase_token:
+        logging.warning("No Supabase token found in config")
         return None
 
     mcp_config = config.get("configurable", {}).get("mcp_config")
     if not mcp_config or not mcp_config.get("url"):
+        logging.warning("No MCP config or URL found")
         return None
 
+    logging.info(f"Exchanging Supabase token for MCP token at {mcp_config.get('url')}")
     mcp_tokens = await get_mcp_access_token(supabase_token, mcp_config.get("url"))
 
-    await set_tokens(config, mcp_tokens)
+    if mcp_tokens:
+        logging.info("Successfully exchanged token, storing in cache")
+        await set_tokens(config, mcp_tokens)
+    else:
+        logging.error("Failed to exchange token")
+
     return mcp_tokens
