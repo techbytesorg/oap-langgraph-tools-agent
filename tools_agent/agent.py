@@ -1,5 +1,6 @@
 import os
 import logging
+import jwt
 from langchain_core.runnables import RunnableConfig
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -265,20 +266,15 @@ async def graph(config: RunnableConfig):
     if schema_name:
         logger.debug(f"Processing structured output request for schema: {schema_name}")
         try:
-            # Try to get user ID - first from config, then from JWT token
-            user_id = config.get("configurable", {}).get("user_id")
-
-            if not user_id:
-                supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
-                if supabase_token:
-                    # Extract user ID from token if available
-                    import jwt
-                    try:
-                        decoded = jwt.decode(supabase_token, options={"verify_signature": False})
-                        user_id = decoded.get("sub")
-                        logger.debug(f"Extracted user_id from JWT token")
-                    except Exception as jwt_error:
-                        logger.warning(f"JWT decode error: {jwt_error}")
+            # Extract user ID from JWT token
+            user_id = None
+            if supabase_token:
+                try:
+                    decoded = jwt.decode(supabase_token, options={"verify_signature": False})
+                    user_id = decoded.get("sub")
+                    logger.debug(f"Extracted user_id from JWT token")
+                except Exception as jwt_error:
+                    logger.warning(f"JWT decode error: {jwt_error}")
 
             response_format = await load_schema_model(schema_name, user_id)
             logger.info(f"Successfully loaded schema {schema_name} for structured output")
