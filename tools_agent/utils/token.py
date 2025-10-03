@@ -109,7 +109,15 @@ async def fetch_tokens(config: RunnableConfig) -> dict[str, Any]:
         logger.debug("[Token] Using cached MCP tokens")
         return current_tokens
 
+    # Try to get Supabase token from configurable first, then fallback to metadata
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
+    if not supabase_token:
+        supabase_token = config.get("metadata", {}).get("supabaseAccessToken")
+        if supabase_token:
+            logger.info("[Token] Using Supabase token from metadata")
+    else:
+        logger.info("[Token] Using Supabase token from configurable")
+
     if not supabase_token:
         logger.warning("[Token] No Supabase token in config")
         return None
