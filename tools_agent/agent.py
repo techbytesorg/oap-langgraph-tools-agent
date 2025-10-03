@@ -189,7 +189,14 @@ async def graph(config: RunnableConfig):
     cfg = GraphConfigPydantic(**config.get("configurable", {}))
     tools = []
 
+    # Try to get Supabase token from configurable first (local dev), then fallback to metadata (cloud)
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
+    if not supabase_token:
+        supabase_token = config.get("metadata", {}).get("supabaseAccessToken")
+        logger.info(f"[Auth] Using Supabase token from metadata (cloud deployment)")
+    else:
+        logger.info(f"[Auth] Using Supabase token from configurable (local dev)")
+
     logger.info(f"[Auth] Supabase token present: {supabase_token is not None}, length: {len(supabase_token) if supabase_token else 0} chars")
 
     # Check RAG configuration
