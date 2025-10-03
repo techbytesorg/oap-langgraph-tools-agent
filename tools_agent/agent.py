@@ -177,30 +177,54 @@ def get_api_key_for_model(model_name: str, config: RunnableConfig):
 
 
 async def graph(config: RunnableConfig):
+    logger.info(f"[Agent] Config keys: {list(config.keys())}")
+    logger.info(f"[Agent] Configurable keys: {list(config.get('configurable', {}).keys())}")
+
+    # Check if metadata contains supabaseAccessToken
+    metadata = config.get("metadata", {})
+    logger.info(f"[Agent] Metadata keys: {list(metadata.keys())}")
+    if "supabaseAccessToken" in metadata:
+        logger.info(f"[Agent] Metadata.supabaseAccessToken present: True, length: {len(metadata['supabaseAccessToken'])} chars")
+
     cfg = GraphConfigPydantic(**config.get("configurable", {}))
     tools = []
 
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
-    if cfg.rag and cfg.rag.rag_url and cfg.rag.collections and supabase_token:
-        for collection in cfg.rag.collections:
-            rag_tool = await create_rag_tool(
-                cfg.rag.rag_url, collection, supabase_token
-            )
-            tools.append(rag_tool)
+    logger.info(f"[Auth] Supabase token present: {supabase_token is not None}, length: {len(supabase_token) if supabase_token else 0} chars")
 
-    logger.info(f"MCP Config check: mcp_config={cfg.mcp_config is not None}")
+    # Check RAG configuration
+    if cfg.rag:
+        logger.info(f"[RAG] URL: {cfg.rag.rag_url}, Collections: {cfg.rag.collections}")
+
+    if cfg.rag and cfg.rag.rag_url and cfg.rag.collections and supabase_token:
+        logger.info(f"[RAG] Creating tools for {len(cfg.rag.collections)} collection(s)")
+        for collection in cfg.rag.collections:
+            try:
+                rag_tool = await create_rag_tool(
+                    cfg.rag.rag_url, collection, supabase_token
+                )
+                tools.append(rag_tool)
+                logger.info(f"[RAG] Added tool: {rag_tool.name}")
+            except Exception as e:
+                logger.error(f"[RAG] Failed to create tool for collection {collection}: {e}")
+    else:
+        missing = []
+        if not cfg.rag: missing.append("cfg.rag")
+        elif not cfg.rag.rag_url: missing.append("rag_url")
+        elif not cfg.rag.collections: missing.append("collections")
+        if not supabase_token: missing.append("supabase_token")
+        if missing:
+            logger.warning(f"[RAG] Tools not created, missing: {', '.join(missing)}")
+
     if cfg.mcp_config:
-        logger.info(f"MCP Config details: url={cfg.mcp_config.url}, tools={cfg.mcp_config.tools}, auth_required={cfg.mcp_config.auth_required}")
+        logger.info(f"[MCP] Config: url={cfg.mcp_config.url}, tools={cfg.mcp_config.tools}, auth_required={cfg.mcp_config.auth_required}")
 
     if cfg.mcp_config and cfg.mcp_config.auth_required:
-        logger.info("MCP auth required, fetching tokens...")
+        logger.info("[MCP] Authentication required, fetching tokens...")
         mcp_tokens = await fetch_tokens(config)
-        logger.info(f"Fetched MCP tokens: {mcp_tokens is not None}")
+        logger.info(f"[MCP] Token fetch {'successful' if mcp_tokens else 'failed'}")
     else:
-        logger.info("MCP auth not required, skipping token fetch")
         mcp_tokens = None
-
-    logger.info(f"MCP connection check: has_config={cfg.mcp_config is not None}, has_url={cfg.mcp_config and cfg.mcp_config.url is not None}, has_tools={cfg.mcp_config and cfg.mcp_config.tools is not None}, auth_ok={mcp_tokens is not None or (cfg.mcp_config and not cfg.mcp_config.auth_required)}")
 
     if (
         cfg.mcp_config
@@ -209,8 +233,8 @@ async def graph(config: RunnableConfig):
         and (mcp_tokens or not cfg.mcp_config.auth_required)
     ):
         server_url = cfg.mcp_config.url.rstrip("/") + "/mcp"
-        logger.info(f"Connecting to MCP server: {server_url}")
-        logger.info(f"Looking for tools: {cfg.mcp_config.tools}")
+        logger.info(f"[MCP] Connecting to {server_url}")
+        logger.info(f"[MCP] Requested tools: {cfg.mcp_config.tools}")
 
         tool_names_to_find = set(cfg.mcp_config.tools)
         fetched_mcp_tools_list: list[StructuredTool] = []
@@ -222,15 +246,12 @@ async def graph(config: RunnableConfig):
             and {"Authorization": f"Bearer {mcp_tokens['access_token']}"}
             or None
         )
-        logger.info(f"Using auth headers: {headers is not None}")
         try:
-            logger.info("Opening MCP client connection...")
             async with streamablehttp_client(server_url, headers=headers) as streams:
                 read_stream, write_stream, _ = streams
                 async with ClientSession(read_stream, write_stream) as session:
-                    logger.info("Initializing MCP session...")
                     await session.initialize()
-                    logger.info("MCP session initialized successfully")
+                    logger.info("[MCP] Session initialized")
 
                     page_cursor = None
 
@@ -245,7 +266,7 @@ async def graph(config: RunnableConfig):
                                 mcp_tool.name in tool_names_to_find
                                 and mcp_tool.name not in names_of_tools_added
                             ):
-                                logger.info(f"Adding MCP tool: {mcp_tool.name}")
+                                logger.debug(f"[MCP] Adding tool: {mcp_tool.name}")
                                 langchain_tool = create_langchain_mcp_tool(
                                     mcp_tool, mcp_server_url=server_url, headers=headers
                                 )
@@ -264,10 +285,10 @@ async def graph(config: RunnableConfig):
                         ):
                             break
 
-                    logger.info(f"Successfully loaded {len(fetched_mcp_tools_list)} MCP tool(s)")
+                    logger.info(f"[MCP] Successfully loaded {len(fetched_mcp_tools_list)} tool(s)")
                     tools.extend(fetched_mcp_tools_list)
         except Exception as e:
-            logger.error(f"Failed to fetch MCP tools: {e}", exc_info=True)
+            logger.error(f"[MCP] Failed to fetch tools: {e}", exc_info=True)
             print(f"Failed to fetch MCP tools: {e}")
             pass
 
@@ -283,7 +304,7 @@ async def graph(config: RunnableConfig):
     response_format = None
 
     if schema_name:
-        logger.debug(f"Processing structured output request for schema: {schema_name}")
+        logger.debug(f"[Schema] Processing structured output: {schema_name}")
         try:
             # Extract user ID from JWT token
             user_id = None
@@ -291,20 +312,24 @@ async def graph(config: RunnableConfig):
                 try:
                     decoded = jwt.decode(supabase_token, options={"verify_signature": False})
                     user_id = decoded.get("sub")
-                    logger.debug(f"Extracted user_id from JWT token")
                 except Exception as jwt_error:
-                    logger.warning(f"JWT decode error: {jwt_error}")
+                    logger.warning(f"[Schema] JWT decode error: {jwt_error}")
 
             response_format = await load_schema_model(schema_name, user_id)
-            logger.info(f"Successfully loaded schema {schema_name} for structured output")
+            logger.info(f"[Schema] Loaded schema: {schema_name}")
         except Exception as e:
-            logger.error(f"Error loading schema {schema_name}: {e}")
-            # Continue without structured output
+            logger.error(f"[Schema] Failed to load {schema_name}: {e}")
             response_format = None
 
-    logger.info(f"Creating agent with {len(tools)} tools")
+    logger.info(f"[Agent] Creating agent with {len(tools)} tool(s)")
     if tools:
-        logger.info(f"Tool names: {[tool.name for tool in tools]}")
+        tool_names = [tool.name for tool in tools]
+        logger.info(f"[Agent] Available tools: {tool_names}")
+        rag_tools = [t for t in tools if hasattr(t, 'name') and any(keyword in t.name.lower() for keyword in ['collection', 'database', 'search', 'allergen'])]
+        if rag_tools:
+            logger.info(f"[Agent] RAG tools ({len(rag_tools)}): {[t.name for t in rag_tools]}")
+    else:
+        logger.warning(f"[Agent] No tools available - agent will have limited capabilities")
 
     return create_react_agent(
         prompt=cfg.system_prompt + UNEDITABLE_SYSTEM_PROMPT,
