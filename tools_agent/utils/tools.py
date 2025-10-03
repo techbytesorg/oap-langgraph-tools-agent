@@ -2,8 +2,11 @@ from typing import Annotated
 from langchain_core.tools import StructuredTool, ToolException, tool
 import aiohttp
 import re
+import logging
 from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession, Tool, McpError
+
+logger = logging.getLogger(__name__)
 
 
 def create_langchain_mcp_tool(
@@ -85,15 +88,21 @@ async def create_rag_tool(rag_url: str, collection_id: str, access_token: str):
     Returns:
         A structured tool that can be used to query the RAG collection
     """
+    logger.info(f"[RAG Tool] Creating tool for collection_id={collection_id}, url={rag_url}")
+    logger.debug(f"[RAG Tool] Access token length: {len(access_token)} chars")
+
     if rag_url.endswith("/"):
         rag_url = rag_url[:-1]
 
     collection_endpoint = f"{rag_url}/collections/{collection_id}"
+    logger.debug(f"[RAG Tool] Fetching metadata from {collection_endpoint}")
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 collection_endpoint, headers={"Authorization": f"Bearer {access_token}"}
             ) as response:
+                logger.debug(f"[RAG Tool] Metadata response status: {response.status}")
                 response.raise_for_status()
                 collection_data = await response.json()
 
@@ -101,13 +110,13 @@ async def create_rag_tool(rag_url: str, collection_id: str, access_token: str):
         raw_collection_name = collection_data.get("name", f"collection_{collection_id}")
 
         # Sanitize the name to only include alphanumeric characters, underscores, and hyphens
-        # Replace any other characters with underscores
         sanitized_name = re.sub(r"[^a-zA-Z0-9_-]", "_", raw_collection_name)
 
         # Ensure the name is not empty and doesn't exceed 64 characters
         if not sanitized_name:
             sanitized_name = f"collection_{collection_id}"
         collection_name = sanitized_name[:64]
+        logger.info(f"[RAG Tool] Tool name: '{collection_name}' (from '{raw_collection_name}')")
 
         raw_description = collection_data.get("metadata", {}).get("description")
 
@@ -121,6 +130,7 @@ async def create_rag_tool(rag_url: str, collection_id: str, access_token: str):
             query: Annotated[str, "The search query to find relevant documents"],
         ) -> str:
             """Search for documents in the collection based on the query"""
+            logger.info(f"[RAG Query] Tool '{collection_name}' invoked with query: {query[:100]}...")
 
             search_endpoint = f"{rag_url}/collections/{collection_id}/documents/search"
             payload = {"query": query, "limit": 10}
@@ -134,6 +144,7 @@ async def create_rag_tool(rag_url: str, collection_id: str, access_token: str):
                     ) as search_response:
                         search_response.raise_for_status()
                         documents = await search_response.json()
+                        logger.info(f"[RAG Query] Retrieved {len(documents)} documents for '{collection_name}'")
 
                 formatted_docs = "<all-documents>\n"
 
@@ -147,9 +158,12 @@ async def create_rag_tool(rag_url: str, collection_id: str, access_token: str):
                 formatted_docs += "</all-documents>"
                 return formatted_docs
             except Exception as e:
+                logger.error(f"[RAG Query] Search error: {str(e)}")
                 return f"<all-documents>\n  <error>{str(e)}</error>\n</all-documents>"
 
+        logger.info(f"[RAG Tool] Successfully created tool '{collection_name}'")
         return get_documents
 
     except Exception as e:
+        logger.error(f"[RAG Tool] Failed to create tool: {str(e)}")
         raise Exception(f"Failed to create RAG tool: {str(e)}")

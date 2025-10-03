@@ -4,6 +4,8 @@ from typing import Dict, Optional, Any
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_store
 
+logger = logging.getLogger(__name__)
+
 
 async def get_mcp_access_token(
     supabase_token: str,
@@ -40,9 +42,9 @@ async def get_mcp_access_token(
                     return token_data
                 else:
                     response_text = await token_response.text()
-                    logging.error(f"Token exchange failed: {response_text}")
+                    logger.error(f"[Token] Exchange failed: {response_text}")
     except Exception as e:
-        logging.error(f"Error during token exchange: {e}")
+        logger.error(f"[Token] Exchange error: {e}")
 
     return None
 
@@ -104,26 +106,26 @@ async def fetch_tokens(config: RunnableConfig) -> dict[str, Any]:
 
     current_tokens = await get_tokens(config)
     if current_tokens:
-        logging.info("Using cached MCP tokens")
+        logger.debug("[Token] Using cached MCP tokens")
         return current_tokens
 
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
     if not supabase_token:
-        logging.warning("No Supabase token found in config")
+        logger.warning("[Token] No Supabase token in config")
         return None
 
     mcp_config = config.get("configurable", {}).get("mcp_config")
     if not mcp_config or not mcp_config.get("url"):
-        logging.warning("No MCP config or URL found")
+        logger.warning("[Token] No MCP config or URL found")
         return None
 
-    logging.info(f"Exchanging Supabase token for MCP token at {mcp_config.get('url')}")
+    logger.info(f"[Token] Exchanging Supabase token for MCP token at {mcp_config.get('url')}")
     mcp_tokens = await get_mcp_access_token(supabase_token, mcp_config.get("url"))
 
     if mcp_tokens:
-        logging.info("Successfully exchanged token, storing in cache")
+        logger.info("[Token] Exchange successful, caching tokens")
         await set_tokens(config, mcp_tokens)
     else:
-        logging.error("Failed to exchange token")
+        logger.error("[Token] Exchange failed")
 
     return mcp_tokens
