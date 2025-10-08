@@ -7,15 +7,15 @@ authors = [
 ]
 requires-python = ">=3.11.0,<3.13"
 dependencies = [
-    "langgraph>=0.6.2",
-    "langchain-anthropic>=0.3.18",
-    "langchain-core>=0.3.72",
-    "langchain-openai>=0.3.28",
+    "langgraph==0.6.2",
+    "langchain-anthropic==0.3.18",
+    "langchain-core==0.3.72",
+    "langchain-openai==0.3.28",
     "pydantic==2.11.3",
-    "langchain>=0.3.27",
-    "mcp>=1.9.1",
-    "supabase>=2.15.1",
-    "aiohttp>=3.8.0",
+    "langchain==0.3.27",
+    "mcp==1.9.1",
+    "supabase==2.15.1",
+    "aiohttp==3.13.0",
 ]
 
 [tool.setuptools]
