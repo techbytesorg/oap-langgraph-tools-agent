@@ -5,7 +5,7 @@
   },
   "env": ".env",
   "python_version": "3.11",
-  "api_version": "0.3", 
+  "api_version": "0.3.0", 
   "auth": {
     "path": "./tools_agent/security/auth.py:auth"
   },
