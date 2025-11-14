@@ -4,7 +4,7 @@ Comprehensive end-to-end test suite using **pytest** for the LangChain v1 agent 
 
 ## Overview
 
-This test suite includes **~80 test cases** across **7 test modules**:
+This test suite includes **~95 test cases** across **8 test modules**:
 
 - **test_mcp.py** (13 tests) - MCP server integration with authentication
 - **test_rag.py** (13 tests) - RAG collection queries and document retrieval  
@@ -13,6 +13,7 @@ This test suite includes **~80 test cases** across **7 test modules**:
 - **test_integration.py** (9 tests) - Multi-feature scenarios
 - **test_auth.py** (5 tests) - Authentication flows and security
 - **test_resilience.py** (8 tests) - Error recovery and stress testing
+- **test_structured_output.py** (16 tests) - Structured output with schema validation
 
 ## Prerequisites
 
@@ -167,13 +168,23 @@ Tests that verify behavior at extremes:
 
 Pytest fixtures provide shared setup:
 
+**Authentication & Client:**
 - `auth_credentials` - Session-scoped Supabase authentication
 - `access_token` - Supabase access token
 - `user_id` - Authenticated user ID
 - `remote_graph` - Configured RemoteGraph client
+
+**Service URLs:**
 - `mcp_server_url` - MCP server URL (skips if not set)
 - `rag_api_url` - RAG API URL (skips if not set)
 - `test_rag_collection` - Test collection ID (skips if not set)
+
+**Structured Output:**
+- `schema_definitions` - All 8 Pydantic schema models
+- `schema_store` - Session-scoped schema storage with auto-cleanup
+- `stored_schema` - Function-scoped schema access
+
+**Helpers:**
 - `assert_response_valid()` - Response validation helper
 
 ### Test Pattern
@@ -247,6 +258,125 @@ tests/test_mcp.py::test_basic_tool_invocation SKIPPED [1%]
 ```
 
 Tests are automatically skipped if required environment variables are not set.
+
+## Structured Output Testing
+
+The `test_structured_output.py` module tests the agent's ability to return responses conforming to predefined Pydantic schemas stored in the LangGraph memory store.
+
+### Schema Coverage
+
+The test suite covers **8 comprehensive schemas** testing all OpenAI JSON Schema specifications:
+
+1. **RecipeNutritionAnalysis** - Number constraints (ge, le, multipleOf)
+2. **IngredientClassification** - Enums and array constraints  
+3. **FoodSafetyReport** - Nested objects with $ref and $defs
+4. **MenuPlanning** - Complex nested objects (arrays of objects)
+5. **RecipeInstructions** - Recursive/self-referencing schemas
+6. **SupplierQuote** - Union types and pattern validation (email, phone, date)
+7. **QualityInspection** - Multiple enums and format validation
+8. **AllergyAnalysisResponse** - Array of nested objects
+
+### Schema Fixture Usage
+
+Schemas are automatically managed using session-scoped fixtures:
+
+```python
+@pytest.mark.asyncio
+@pytest.mark.structured_output
+async def test_nutrition_analysis(remote_graph, access_token, user_id, stored_schema, schema_definitions):
+    """Test with automatic schema setup/teardown"""
+    result = await remote_graph.ainvoke(
+        {"messages": [{"role": "user", "content": "Analyze nutrition..."}]},
+        config={
+            "configurable": {
+                "thread_id": str(uuid.uuid4()),
+                "x-supabase-access-token": access_token,
+                "user_id": user_id,
+                "OutputSchemaName": "RecipeNutritionAnalysis"  # Schema to use
+            }
+        }
+    )
+    
+    # Validate structured response
+    structured_response = validate_structured_response(result, "RecipeNutritionAnalysis")
+    assert_schema_conforms(structured_response, schema_definitions["RecipeNutritionAnalysis"])
+```
+
+### Schema Lifecycle
+
+1. **Setup (Session Start):** The `schema_store` fixture stores all 8 schemas in the LangGraph memory store once at the beginning of the test session
+2. **Tests:** All tests have access to the stored schemas via `stored_schema` fixture
+3. **Teardown (Session End):** All schemas are automatically deleted from the memory store
+
+This approach:
+- **Avoids repeated setup/teardown** - Much faster than per-test schema management
+- **Ensures isolation** - Each test uses a unique thread_id
+- **Automatic cleanup** - Schemas are always deleted even if tests fail
+- **No manual cleanup needed** - Unlike the old `schema_loader.py` script
+
+### Running Structured Output Tests
+
+```bash
+# Run all structured output tests
+uv run pytest tests/test_structured_output.py -v
+
+# Run only the 8 main schema tests (skip edge cases)
+uv run pytest tests/test_structured_output.py -k "test_nutrition or test_ingredient or test_food_safety or test_menu or test_recipe_instructions or test_supplier or test_quality or test_allergy"
+
+# Run with structured_output marker
+uv run pytest -m structured_output
+
+# Run integration tests (actual agent invocations)
+uv run pytest -m "structured_output and slow_integration"
+```
+
+### Test Categories
+
+**Success Cases (8 tests):**
+- Validate each schema type produces correct structured output
+- Verify schema constraints are enforced (ranges, enums, patterns)
+- Test nested and recursive structures
+
+**Edge Cases (6 tests):**
+- Non-existent schema names
+- No schema provided (normal text output)
+- Optional/nullable fields
+- Schema switching within same thread
+- Special characters and UTF-8
+- Minimal input with agent estimation
+
+**Failure Recovery (2 tests):**
+- Malformed schema names
+- Schema validation with minimal data
+
+### Helper Functions
+
+The test module provides two key validation helpers:
+
+```python
+def validate_structured_response(result: dict, schema_name: str) -> Dict[str, Any]:
+    """Assert that structured_response exists and return parsed JSON"""
+    
+def assert_schema_conforms(data: Dict[str, Any], schema_class) -> None:
+    """Validate data conforms to Pydantic schema using ValidationError"""
+```
+
+### Troubleshooting Structured Output
+
+**Schema Not Found:**
+- Ensure LangGraph dev server is running
+- The `schema_store` fixture runs automatically - you don't need to run `schema_loader.py`
+- Check that the test session completed without errors during fixture setup
+
+**Validation Errors:**
+- The agent may generate output that doesn't perfectly match the schema
+- Review the structured_response in test output to debug
+- Some schemas (especially with strict patterns) may require multiple attempts
+
+**No Structured Response:**
+- Verify `OutputSchemaName` is set in config
+- Ensure `user_id` is provided in configurable
+- Check agent logs for schema loading errors
 
 ## Troubleshooting
 
