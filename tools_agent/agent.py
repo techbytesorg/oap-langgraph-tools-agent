@@ -4,7 +4,8 @@ import jwt
 from langchain_core.runnables import RunnableConfig
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from tools_agent.utils.tools import create_rag_tool
 from langchain.chat_models import init_chat_model
 from tools_agent.utils.token import fetch_tokens
@@ -17,7 +18,6 @@ from tools_agent.utils.tools import (
 )
 from tools_agent.utils.structured_output import load_schema_model
 from langgraph.store.memory import InMemoryStore
-from langgraph.config import get_store
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +162,13 @@ def get_api_key_for_model(model_name: str, config: RunnableConfig):
     model_name = model_name.lower()
     model_to_key = {
         "openai:": "OPENAI_API_KEY",
-        "anthropic:": "ANTHROPIC_API_KEY", 
-        "google": "GOOGLE_API_KEY"
+        "anthropic:": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
     }
-    key_name = next((key for prefix, key in model_to_key.items() 
-                    if model_name.startswith(prefix)), None)
+    key_name = next(
+        (key for prefix, key in model_to_key.items() if model_name.startswith(prefix)),
+        None,
+    )
     if not key_name:
         return None
     api_keys = config.get("configurable", {}).get("apiKeys", {})
@@ -178,13 +180,17 @@ def get_api_key_for_model(model_name: str, config: RunnableConfig):
 
 async def graph(config: RunnableConfig):
     logger.info(f"[Agent] Config keys: {list(config.keys())}")
-    logger.info(f"[Agent] Configurable keys: {list(config.get('configurable', {}).keys())}")
+    logger.info(
+        f"[Agent] Configurable keys: {list(config.get('configurable', {}).keys())}"
+    )
 
     # Check if metadata contains supabaseAccessToken
     metadata = config.get("metadata", {})
     logger.info(f"[Agent] Metadata keys: {list(metadata.keys())}")
     if "supabaseAccessToken" in metadata:
-        logger.info(f"[Agent] Metadata.supabaseAccessToken present: True, length: {len(metadata['supabaseAccessToken'])} chars")
+        logger.info(
+            f"[Agent] Metadata.supabaseAccessToken present: True, length: {len(metadata['supabaseAccessToken'])} chars"
+        )
 
     cfg = GraphConfigPydantic(**config.get("configurable", {}))
     tools = []
@@ -193,18 +199,22 @@ async def graph(config: RunnableConfig):
     supabase_token = config.get("configurable", {}).get("x-supabase-access-token")
     if not supabase_token:
         supabase_token = config.get("metadata", {}).get("supabaseAccessToken")
-        logger.info(f"[Auth] Using Supabase token from metadata")
+        logger.info("[Auth] Using Supabase token from metadata")
     else:
-        logger.info(f"[Auth] Using Supabase token from configurable")
+        logger.info("[Auth] Using Supabase token from configurable")
 
-    logger.info(f"[Auth] Supabase token present: {supabase_token is not None}, length: {len(supabase_token) if supabase_token else 0} chars")
+    logger.info(
+        f"[Auth] Supabase token present: {supabase_token is not None}, length: {len(supabase_token) if supabase_token else 0} chars"
+    )
 
     # Check RAG configuration
     if cfg.rag:
         logger.info(f"[RAG] URL: {cfg.rag.rag_url}, Collections: {cfg.rag.collections}")
 
     if cfg.rag and cfg.rag.rag_url and cfg.rag.collections and supabase_token:
-        logger.info(f"[RAG] Creating tools for {len(cfg.rag.collections)} collection(s)")
+        logger.info(
+            f"[RAG] Creating tools for {len(cfg.rag.collections)} collection(s)"
+        )
         for collection in cfg.rag.collections:
             try:
                 rag_tool = await create_rag_tool(
@@ -213,18 +223,26 @@ async def graph(config: RunnableConfig):
                 tools.append(rag_tool)
                 logger.info(f"[RAG] Added tool: {rag_tool.name}")
             except Exception as e:
-                logger.error(f"[RAG] Failed to create tool for collection {collection}: {e}")
+                logger.error(
+                    f"[RAG] Failed to create tool for collection {collection}: {e}"
+                )
     else:
         missing = []
-        if not cfg.rag: missing.append("cfg.rag")
-        elif not cfg.rag.rag_url: missing.append("rag_url")
-        elif not cfg.rag.collections: missing.append("collections")
-        if not supabase_token: missing.append("supabase_token")
+        if not cfg.rag:
+            missing.append("cfg.rag")
+        elif not cfg.rag.rag_url:
+            missing.append("rag_url")
+        elif not cfg.rag.collections:
+            missing.append("collections")
+        if not supabase_token:
+            missing.append("supabase_token")
         if missing:
             logger.warning(f"[RAG] Tools not created, missing: {', '.join(missing)}")
 
     if cfg.mcp_config:
-        logger.info(f"[MCP] Config: url={cfg.mcp_config.url}, tools={cfg.mcp_config.tools}, auth_required={cfg.mcp_config.auth_required}")
+        logger.info(
+            f"[MCP] Config: url={cfg.mcp_config.url}, tools={cfg.mcp_config.tools}, auth_required={cfg.mcp_config.auth_required}"
+        )
 
     if cfg.mcp_config and cfg.mcp_config.auth_required:
         logger.info("[MCP] Authentication required, fetching tokens...")
@@ -292,7 +310,9 @@ async def graph(config: RunnableConfig):
                         ):
                             break
 
-                    logger.info(f"[MCP] Successfully loaded {len(fetched_mcp_tools_list)} tool(s)")
+                    logger.info(
+                        f"[MCP] Successfully loaded {len(fetched_mcp_tools_list)} tool(s)"
+                    )
                     tools.extend(fetched_mcp_tools_list)
         except Exception as e:
             logger.error(f"[MCP] Failed to fetch tools: {e}", exc_info=True)
@@ -303,7 +323,7 @@ async def graph(config: RunnableConfig):
         cfg.model_name,
         temperature=cfg.temperature,
         max_tokens=cfg.max_tokens,
-        api_key=get_api_key_for_model(cfg.model_name, config) or "No token found"
+        api_key=get_api_key_for_model(cfg.model_name, config) or "No token found",
     )
 
     # Check for structured output schema
@@ -317,7 +337,9 @@ async def graph(config: RunnableConfig):
             user_id = None
             if supabase_token:
                 try:
-                    decoded = jwt.decode(supabase_token, options={"verify_signature": False})
+                    decoded = jwt.decode(
+                        supabase_token, options={"verify_signature": False}
+                    )
                     user_id = decoded.get("sub")
                 except Exception as jwt_error:
                     logger.warning(f"[Schema] JWT decode error: {jwt_error}")
@@ -332,17 +354,33 @@ async def graph(config: RunnableConfig):
     if tools:
         tool_names = [tool.name for tool in tools]
         logger.info(f"[Agent] Available tools: {tool_names}")
-        rag_tools = [t for t in tools if hasattr(t, 'name') and any(keyword in t.name.lower() for keyword in ['collection', 'database', 'search', 'allergen'])]
+        rag_tools = [
+            t
+            for t in tools
+            if hasattr(t, "name")
+            and any(
+                keyword in t.name.lower()
+                for keyword in ["collection", "database", "search", "allergen"]
+            )
+        ]
         if rag_tools:
-            logger.info(f"[Agent] RAG tools ({len(rag_tools)}): {[t.name for t in rag_tools]}")
+            logger.info(
+                f"[Agent] RAG tools ({len(rag_tools)}): {[t.name for t in rag_tools]}"
+            )
     else:
-        logger.warning(f"[Agent] No tools available - agent will have limited capabilities")
+        logger.warning(
+            "[Agent] No tools available - agent will have limited capabilities"
+        )
 
-    return create_react_agent(
-        prompt=cfg.system_prompt + UNEDITABLE_SYSTEM_PROMPT,
+    response_strategy = ToolStrategy(response_format) if response_format else None
+
+    agent = create_agent(
         model=model,
         tools=tools,
-        config_schema=GraphConfigPydantic,
-        response_format=response_format,
-        store=store
+        system_prompt=cfg.system_prompt + UNEDITABLE_SYSTEM_PROMPT,
+        response_format=response_strategy,
+        context_schema=GraphConfigPydantic,
+        store=store,
     )
+
+    return agent.with_config(context=cfg)
